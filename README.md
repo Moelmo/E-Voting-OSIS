@@ -71,7 +71,7 @@ Siswa masuk menggunakan **NIS** (ketik manual atau pindai barcode kartu pelajar)
 1. **Clone repository** ke folder web server. Untuk XAMPP/LAMPP, folder umumnya bernama `htdocs`.
 
    ```bash
-   git clone <URL_REPOSITORY> pemilos
+   git clone https://github.com/Moelmo/E-Voting-OSIS.git evoting
    ```
 
 2. **Jalankan Apache dan MySQL/MariaDB.**
@@ -87,7 +87,7 @@ Siswa masuk menggunakan **NIS** (ketik manual atau pindai barcode kartu pelajar)
 5. **Buka aplikasi** di browser:
 
    ```
-   http://localhost/pemilos/
+   http://localhost/evoting/
    ```
 
 ### Inisialisasi Database
