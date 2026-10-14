@@ -92,25 +92,28 @@ function readXlsxRows(string $filePath): Generator
             throw new RuntimeException('Daftar worksheet pada file XLSX tidak valid.');
         }
 
-        $relationshipNamespace = 'http://schemas.openxmlformats.org/package/2006/relationships';
-        $officeRelationshipNamespace = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
         $targetsById = [];
-        foreach ($relationshipsDocument->children($relationshipNamespace)->Relationship as $relationship) {
-            if ((string)$relationship['TargetMode'] !== 'External') {
-                $targetsById[(string)$relationship['Id']] = (string)$relationship['Target'];
-            }
+        $relationshipNodes = $relationshipsDocument->xpath('//*[local-name()="Relationship"]') ?: [];
+        foreach ($relationshipNodes as $relationship) {
+            $targetsById[(string)$relationship['Id']] = (string)$relationship['Target'];
         }
 
+        $sheetNodes = $workbookDocument->xpath('//*[local-name()="sheets"]/*[local-name()="sheet"]') ?: [];
         $worksheetPaths = [];
-        $sheets = $workbookDocument->children($namespace)->sheets->children($namespace)->sheet;
-        foreach ($sheets as $sheet) {
-            $relationshipId = (string)$sheet->attributes($officeRelationshipNamespace)['id'];
+        foreach ($sheetNodes as $sheet) {
+            $relationshipIds = $sheet->xpath('./@*[local-name()="id"]') ?: [];
+            $relationshipId = isset($relationshipIds[0]) ? (string)$relationshipIds[0] : '';
             $target = $targetsById[$relationshipId] ?? '';
             if ($target === '') {
                 continue;
             }
 
-            $path = str_starts_with($target, '/') ? ltrim($target, '/') : 'xl/' . $target;
+            if (str_starts_with($target, '/')) {
+                $path = ltrim($target, '/');
+            } else {
+                $path = 'xl/' . $target;
+            }
+
             $normalizedParts = [];
             foreach (explode('/', $path) as $part) {
                 if ($part === '' || $part === '.') {
@@ -126,9 +129,9 @@ function readXlsxRows(string $filePath): Generator
         }
 
         if ($worksheetPaths === []) {
-            throw new RuntimeException($sheets->count() === 0
+            throw new RuntimeException($sheetNodes === []
                 ? 'Workbook XLSX tidak memiliki worksheet yang dapat dibaca.'
-                : 'Relasi worksheet pada file XLSX tidak ditemukan atau tidak valid.');
+                : 'Relasi worksheet pada file XLSX tidak ditemukan atau tidak valid. ID relasi: ' . implode(', ', array_keys($targetsById)));
         }
 
         foreach ($worksheetPaths as $worksheetPath) {
