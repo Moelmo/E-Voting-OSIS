@@ -58,7 +58,6 @@ function readXlsxRows(string $filePath): Generator
     }
 
     try {
-        $namespace = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
         $sharedStrings = [];
         $sharedStringsXml = $archive->getFromName('xl/sharedStrings.xml');
         if ($sharedStringsXml !== false) {
@@ -67,14 +66,12 @@ function readXlsxRows(string $filePath): Generator
                 throw new RuntimeException('Data shared strings pada XLSX tidak valid.');
             }
 
-            foreach ($sharedDocument->children($namespace)->si as $item) {
+            $sharedStringItems = $sharedDocument->xpath('//*[local-name()="si"]') ?: [];
+            foreach ($sharedStringItems as $item) {
                 $text = '';
-                foreach ($item->children($namespace) as $part) {
-                    if ($part->getName() === 't') {
-                        $text .= (string)$part;
-                    } elseif ($part->getName() === 'r') {
-                        $text .= (string)$part->children($namespace)->t;
-                    }
+                $textNodes = $item->xpath('.//*[local-name()="t"]') ?: [];
+                foreach ($textNodes as $textNode) {
+                    $text .= (string)$textNode;
                 }
                 $sharedStrings[] = $text;
             }
@@ -145,9 +142,11 @@ function readXlsxRows(string $filePath): Generator
                 throw new RuntimeException('Data worksheet ' . $worksheetPath . ' tidak valid.');
             }
 
-            foreach ($sheetDocument->children($namespace)->sheetData->row as $row) {
+            $rowNodes = $sheetDocument->xpath('//*[local-name()="sheetData"]/*[local-name()="row"]') ?: [];
+            foreach ($rowNodes as $row) {
                 $cells = [];
-                foreach ($row->children($namespace)->c as $cell) {
+                $cellNodes = $row->xpath('./*[local-name()="c"]') ?: [];
+                foreach ($cellNodes as $cell) {
                     $reference = (string)$cell['r'];
                     if (!preg_match('/^([A-Z]+)/', $reference, $matches)) {
                         continue;
@@ -160,11 +159,15 @@ function readXlsxRows(string $filePath): Generator
                     $columnIndex--;
 
                     $cellType = (string)$cell['t'];
-                    $cellChildren = $cell->children($namespace);
                     if ($cellType === 'inlineStr') {
-                        $value = (string)$cellChildren->is->children($namespace)->t;
+                        $value = '';
+                        $textNodes = $cell->xpath('.//*[local-name()="t"]') ?: [];
+                        foreach ($textNodes as $textNode) {
+                            $value .= (string)$textNode;
+                        }
                     } else {
-                        $value = (string)$cellChildren->v;
+                        $valueNodes = $cell->xpath('./*[local-name()="v"]') ?: [];
+                        $value = isset($valueNodes[0]) ? (string)$valueNodes[0] : '';
                         if ($cellType === 's') {
                             $value = $sharedStrings[(int)$value] ?? '';
                         }
@@ -180,8 +183,6 @@ function readXlsxRows(string $filePath): Generator
                         $values[] = $cells[$columnIndex] ?? '';
                     }
                     yield $values;
-                } else {
-                    yield [];
                 }
             }
         }
