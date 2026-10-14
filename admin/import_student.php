@@ -18,13 +18,121 @@ if (!isset($_FILES['file_excel']) || $_FILES['file_excel']['error'] !== UPLOAD_E
 $fileTmpPath = $_FILES['file_excel']['tmp_name'];
 $fileExtension = strtolower(pathinfo($_FILES['file_excel']['name'], PATHINFO_EXTENSION));
 
-if ($fileExtension !== 'csv') {
-    $_SESSION['student_flash'] = ['type' => 'error', 'message' => 'Format file harus .csv (Simpan Excel sebagai CSV).'];
+if (!in_array($fileExtension, ['csv', 'xlsx'], true)) {
+    $_SESSION['student_flash'] = ['type' => 'error', 'message' => 'Format file harus .csv atau .xlsx.'];
     header('Location: students.php');
     exit;
 }
 
 require __DIR__ . '/../config/database.php';
+
+function readCsvRows(string $filePath): Generator
+{
+    $handle = fopen($filePath, 'r');
+    if ($handle === false) {
+        throw new RuntimeException('Gagal membuka file CSV.');
+    }
+
+    try {
+        $firstLine = fgets($handle);
+        $delimiter = ($firstLine !== false && strpos($firstLine, ';') !== false) ? ';' : ',';
+        rewind($handle);
+
+        while (($row = fgetcsv($handle, 1000, $delimiter)) !== false) {
+            yield $row;
+        }
+    } finally {
+        fclose($handle);
+    }
+}
+
+function readXlsxRows(string $filePath): Generator
+{
+    if (!class_exists(ZipArchive::class) || !function_exists('simplexml_load_string')) {
+        throw new RuntimeException('Import XLSX membutuhkan ekstensi PHP ZipArchive dan SimpleXML.');
+    }
+
+    $archive = new ZipArchive();
+    if ($archive->open($filePath) !== true) {
+        throw new RuntimeException('File XLSX tidak dapat dibuka.');
+    }
+
+    try {
+        $namespace = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+        $sharedStrings = [];
+        $sharedStringsXml = $archive->getFromName('xl/sharedStrings.xml');
+        if ($sharedStringsXml !== false) {
+            $sharedDocument = simplexml_load_string($sharedStringsXml, SimpleXMLElement::class, LIBXML_NONET);
+            if ($sharedDocument === false) {
+                throw new RuntimeException('Data shared strings pada XLSX tidak valid.');
+            }
+
+            foreach ($sharedDocument->children($namespace)->si as $item) {
+                $text = '';
+                foreach ($item->children($namespace) as $part) {
+                    if ($part->getName() === 't') {
+                        $text .= (string)$part;
+                    } elseif ($part->getName() === 'r') {
+                        $text .= (string)$part->children($namespace)->t;
+                    }
+                }
+                $sharedStrings[] = $text;
+            }
+        }
+
+        $sheetXml = $archive->getFromName('xl/worksheets/sheet1.xml');
+        if ($sheetXml === false) {
+            throw new RuntimeException('Sheet pertama pada file XLSX tidak ditemukan.');
+        }
+
+        $sheetDocument = simplexml_load_string($sheetXml, SimpleXMLElement::class, LIBXML_NONET);
+        if ($sheetDocument === false) {
+            throw new RuntimeException('Data worksheet pada XLSX tidak valid.');
+        }
+
+        foreach ($sheetDocument->children($namespace)->sheetData->row as $row) {
+            $cells = [];
+            foreach ($row->children($namespace)->c as $cell) {
+                $reference = (string)$cell['r'];
+                if (!preg_match('/^([A-Z]+)/', $reference, $matches)) {
+                    continue;
+                }
+
+                $columnIndex = 0;
+                foreach (str_split($matches[1]) as $letter) {
+                    $columnIndex = ($columnIndex * 26) + (ord($letter) - ord('A') + 1);
+                }
+                $columnIndex--;
+
+                $cellType = (string)$cell['t'];
+                $cellChildren = $cell->children($namespace);
+                if ($cellType === 'inlineStr') {
+                    $value = (string)$cellChildren->is->children($namespace)->t;
+                } else {
+                    $value = (string)$cellChildren->v;
+                    if ($cellType === 's') {
+                        $value = $sharedStrings[(int)$value] ?? '';
+                    }
+                }
+                $cells[$columnIndex] = $value;
+            }
+
+            if ($cells !== []) {
+                ksort($cells);
+                $lastColumn = max(array_keys($cells));
+                $values = [];
+                for ($columnIndex = 0; $columnIndex <= $lastColumn; $columnIndex++) {
+                    $values[] = $cells[$columnIndex] ?? '';
+                }
+                yield $values;
+            } else {
+                yield [];
+            }
+        }
+    } finally {
+        $archive->close();
+    }
+}
 
 $allowedKelas = ['X', 'XI', 'XII'];
 $allowedJurusan = [
@@ -36,13 +144,6 @@ $allowedJurusan = [
     'SENI RUPA'
 ];
 
-$handle = fopen($fileTmpPath, 'r');
-if ($handle === false) {
-    $_SESSION['student_flash'] = ['type' => 'error', 'message' => 'Gagal membuka file.'];
-    header('Location: students.php');
-    exit;
-}
-
 $inserted = 0;
 $skipped = 0;
 
@@ -50,15 +151,11 @@ $pdo->beginTransaction();
 
 try {
     $statement = $pdo->prepare("INSERT INTO siswa (nis, nama, kelas, jurusan, role, sudah_voting) VALUES (:nis, :nama, :kelas, :jurusan, 'siswa', 0) ON DUPLICATE KEY UPDATE nama = VALUES(nama), kelas = VALUES(kelas), jurusan = VALUES(jurusan)");
+    $rows = $fileExtension === 'xlsx' ? readXlsxRows($fileTmpPath) : readCsvRows($fileTmpPath);
 
-    // Deteksi separator (koma atau titik koma)
-    $firstLine = fgets($handle);
-    $delimiter = (strpos($firstLine, ';') !== false) ? ';' : ',';
-    rewind($handle);
-
-    while (($data = fgetcsv($handle, 1000, $delimiter)) !== false) {
+    foreach ($rows as $data) {
         // Abaikan baris header jika ada
-        if (strtolower(trim((string)$data[0])) === 'nis') {
+        if (strtolower(trim((string)($data[0] ?? ''))) === 'nis') {
             continue;
         }
 
@@ -81,7 +178,6 @@ try {
         $inserted++;
     }
 
-    fclose($handle);
     $pdo->commit();
 
     $_SESSION['student_flash'] = [
@@ -90,7 +186,6 @@ try {
     ];
 } catch (Exception $e) {
     $pdo->rollBack();
-    fclose($handle);
     $_SESSION['student_flash'] = ['type' => 'error', 'message' => 'Terjadi kesalahan saat mengimpor data: ' . $e->getMessage()];
 }
 

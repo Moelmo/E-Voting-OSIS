@@ -152,11 +152,11 @@ $success = $studentFlash !== null && ($studentFlash['type'] ?? '') === 'success'
                             <!-- Form Import -->
                             <form action="import_student.php" method="post" enctype="multipart/form-data" class="mt-5 space-y-3">
                                 <div>
-                                    <label class="block text-xs font-bold text-slate-300 mb-1.5">File CSV (.csv)</label>
-                                    <input type="file" name="file_excel" accept=".csv" class="block w-full text-xs text-slate-400 file:mr-3 file:rounded-xl file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-cyan-300 hover:file:bg-slate-700" required>
+                                    <label class="block text-xs font-bold text-slate-300 mb-1.5">File CSV atau Excel (.csv, .xlsx)</label>
+                                    <input type="file" name="file_excel" accept=".csv,.xlsx" class="block w-full text-xs text-slate-400 file:mr-3 file:rounded-xl file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-cyan-300 hover:file:bg-slate-700" required>
                                 </div>
                                 <button type="submit" class="w-full rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-xs font-bold text-emerald-400 transition hover:bg-emerald-500/20 hover:border-emerald-500/50">
-                                    ↑ Import Data CSV
+                                    ↑ Import Data CSV / Excel
                                 </button>
                             </form>
                         </div>
