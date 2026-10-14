@@ -102,7 +102,8 @@ function readXlsxRows(string $filePath): Generator
         }
 
         $worksheetPaths = [];
-        foreach ($workbookDocument->children($namespace)->sheets->sheet as $sheet) {
+        $sheets = $workbookDocument->children($namespace)->sheets->children($namespace)->sheet;
+        foreach ($sheets as $sheet) {
             $relationshipId = (string)$sheet->attributes($officeRelationshipNamespace)['id'];
             $target = $targetsById[$relationshipId] ?? '';
             if ($target === '') {
@@ -125,7 +126,9 @@ function readXlsxRows(string $filePath): Generator
         }
 
         if ($worksheetPaths === []) {
-            throw new RuntimeException('Tidak ada worksheet yang dapat dibaca dari file XLSX.');
+            throw new RuntimeException($sheets->count() === 0
+                ? 'Workbook XLSX tidak memiliki worksheet yang dapat dibaca.'
+                : 'Relasi worksheet pada file XLSX tidak ditemukan atau tidak valid.');
         }
 
         foreach ($worksheetPaths as $worksheetPath) {
