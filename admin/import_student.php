@@ -80,53 +80,103 @@ function readXlsxRows(string $filePath): Generator
             }
         }
 
-        $sheetXml = $archive->getFromName('xl/worksheets/sheet1.xml');
-        if ($sheetXml === false) {
-            throw new RuntimeException('Sheet pertama pada file XLSX tidak ditemukan.');
+        $workbookXml = $archive->getFromName('xl/workbook.xml');
+        $relationshipsXml = $archive->getFromName('xl/_rels/workbook.xml.rels');
+        if ($workbookXml === false || $relationshipsXml === false) {
+            throw new RuntimeException('Daftar worksheet pada file XLSX tidak ditemukan.');
         }
 
-        $sheetDocument = simplexml_load_string($sheetXml, SimpleXMLElement::class, LIBXML_NONET);
-        if ($sheetDocument === false) {
-            throw new RuntimeException('Data worksheet pada XLSX tidak valid.');
+        $workbookDocument = simplexml_load_string($workbookXml, SimpleXMLElement::class, LIBXML_NONET);
+        $relationshipsDocument = simplexml_load_string($relationshipsXml, SimpleXMLElement::class, LIBXML_NONET);
+        if ($workbookDocument === false || $relationshipsDocument === false) {
+            throw new RuntimeException('Daftar worksheet pada file XLSX tidak valid.');
         }
 
-        foreach ($sheetDocument->children($namespace)->sheetData->row as $row) {
-            $cells = [];
-            foreach ($row->children($namespace)->c as $cell) {
-                $reference = (string)$cell['r'];
-                if (!preg_match('/^([A-Z]+)/', $reference, $matches)) {
-                    continue;
-                }
+        $relationshipNamespace = 'http://schemas.openxmlformats.org/package/2006/relationships';
+        $officeRelationshipNamespace = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+        $targetsById = [];
+        foreach ($relationshipsDocument->children($relationshipNamespace)->Relationship as $relationship) {
+            if ((string)$relationship['TargetMode'] !== 'External') {
+                $targetsById[(string)$relationship['Id']] = (string)$relationship['Target'];
+            }
+        }
 
-                $columnIndex = 0;
-                foreach (str_split($matches[1]) as $letter) {
-                    $columnIndex = ($columnIndex * 26) + (ord($letter) - ord('A') + 1);
-                }
-                $columnIndex--;
-
-                $cellType = (string)$cell['t'];
-                $cellChildren = $cell->children($namespace);
-                if ($cellType === 'inlineStr') {
-                    $value = (string)$cellChildren->is->children($namespace)->t;
-                } else {
-                    $value = (string)$cellChildren->v;
-                    if ($cellType === 's') {
-                        $value = $sharedStrings[(int)$value] ?? '';
-                    }
-                }
-                $cells[$columnIndex] = $value;
+        $worksheetPaths = [];
+        foreach ($workbookDocument->children($namespace)->sheets->sheet as $sheet) {
+            $relationshipId = (string)$sheet->attributes($officeRelationshipNamespace)['id'];
+            $target = $targetsById[$relationshipId] ?? '';
+            if ($target === '') {
+                continue;
             }
 
-            if ($cells !== []) {
-                ksort($cells);
-                $lastColumn = max(array_keys($cells));
-                $values = [];
-                for ($columnIndex = 0; $columnIndex <= $lastColumn; $columnIndex++) {
-                    $values[] = $cells[$columnIndex] ?? '';
+            $path = str_starts_with($target, '/') ? ltrim($target, '/') : 'xl/' . $target;
+            $normalizedParts = [];
+            foreach (explode('/', $path) as $part) {
+                if ($part === '' || $part === '.') {
+                    continue;
                 }
-                yield $values;
-            } else {
-                yield [];
+                if ($part === '..') {
+                    array_pop($normalizedParts);
+                    continue;
+                }
+                $normalizedParts[] = $part;
+            }
+            $worksheetPaths[] = implode('/', $normalizedParts);
+        }
+
+        if ($worksheetPaths === []) {
+            throw new RuntimeException('Tidak ada worksheet yang dapat dibaca dari file XLSX.');
+        }
+
+        foreach ($worksheetPaths as $worksheetPath) {
+            $sheetXml = $archive->getFromName($worksheetPath);
+            if ($sheetXml === false) {
+                throw new RuntimeException('Worksheet ' . $worksheetPath . ' tidak dapat dibaca.');
+            }
+
+            $sheetDocument = simplexml_load_string($sheetXml, SimpleXMLElement::class, LIBXML_NONET);
+            if ($sheetDocument === false) {
+                throw new RuntimeException('Data worksheet ' . $worksheetPath . ' tidak valid.');
+            }
+
+            foreach ($sheetDocument->children($namespace)->sheetData->row as $row) {
+                $cells = [];
+                foreach ($row->children($namespace)->c as $cell) {
+                    $reference = (string)$cell['r'];
+                    if (!preg_match('/^([A-Z]+)/', $reference, $matches)) {
+                        continue;
+                    }
+
+                    $columnIndex = 0;
+                    foreach (str_split($matches[1]) as $letter) {
+                        $columnIndex = ($columnIndex * 26) + (ord($letter) - ord('A') + 1);
+                    }
+                    $columnIndex--;
+
+                    $cellType = (string)$cell['t'];
+                    $cellChildren = $cell->children($namespace);
+                    if ($cellType === 'inlineStr') {
+                        $value = (string)$cellChildren->is->children($namespace)->t;
+                    } else {
+                        $value = (string)$cellChildren->v;
+                        if ($cellType === 's') {
+                            $value = $sharedStrings[(int)$value] ?? '';
+                        }
+                    }
+                    $cells[$columnIndex] = $value;
+                }
+
+                if ($cells !== []) {
+                    ksort($cells);
+                    $lastColumn = max(array_keys($cells));
+                    $values = [];
+                    for ($columnIndex = 0; $columnIndex <= $lastColumn; $columnIndex++) {
+                        $values[] = $cells[$columnIndex] ?? '';
+                    }
+                    yield $values;
+                } else {
+                    yield [];
+                }
             }
         }
     } finally {
