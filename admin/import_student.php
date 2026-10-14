@@ -190,6 +190,19 @@ function readXlsxRows(string $filePath): Generator
     }
 }
 
+function normalizeImportValue(mixed $value): string
+{
+    $value = str_replace(["\xEF\xBB\xBF", "\xC2\xA0"], ['', ' '], (string)$value);
+    return trim($value);
+}
+
+function normalizeImportCategory(mixed $value): string
+{
+    $value = normalizeImportValue($value);
+    $normalized = preg_replace('/\s+/u', ' ', $value);
+    return strtoupper($normalized ?? $value);
+}
+
 $allowedKelas = ['X', 'XI', 'XII'];
 $allowedJurusan = [
     'TJKT-1', 'TJKT-2', 'TJKT-3', 'TJKT-4',
@@ -202,6 +215,9 @@ $allowedJurusan = [
 
 $inserted = 0;
 $skipped = 0;
+$invalidRequired = 0;
+$invalidKelas = 0;
+$invalidJurusan = 0;
 
 $pdo->beginTransaction();
 
@@ -210,17 +226,23 @@ try {
     $rows = $fileExtension === 'xlsx' ? readXlsxRows($fileTmpPath) : readCsvRows($fileTmpPath);
 
     foreach ($rows as $data) {
-        // Abaikan baris header jika ada
-        if (strtolower(trim((string)($data[0] ?? ''))) === 'nis') {
+        if (strtolower(normalizeImportValue($data[0] ?? '')) === 'nis') {
             continue;
         }
 
-        $nis = trim((string)($data[0] ?? ''));
-        $nama = trim((string)($data[1] ?? ''));
-        $kelas = trim((string)($data[2] ?? ''));
-        $jurusan = trim((string)($data[3] ?? ''));
+        $nis = normalizeImportValue($data[0] ?? '');
+        $nama = normalizeImportValue($data[1] ?? '');
+        $kelas = normalizeImportCategory($data[2] ?? '');
+        $jurusan = normalizeImportCategory($data[3] ?? '');
 
-        if ($nis === '' || $nama === '' || !in_array($kelas, $allowedKelas, true) || !in_array($jurusan, $allowedJurusan, true)) {
+        $hasInvalidRequired = $nis === '' || $nama === '';
+        $hasInvalidKelas = !in_array($kelas, $allowedKelas, true);
+        $hasInvalidJurusan = !in_array($jurusan, $allowedJurusan, true);
+        $invalidRequired += (int)$hasInvalidRequired;
+        $invalidKelas += (int)$hasInvalidKelas;
+        $invalidJurusan += (int)$hasInvalidJurusan;
+
+        if ($hasInvalidRequired || $hasInvalidKelas || $hasInvalidJurusan) {
             $skipped++;
             continue;
         }
@@ -238,7 +260,7 @@ try {
 
     $_SESSION['student_flash'] = [
         'type' => 'success',
-        'message' => "Import selesai. Berhasil: {$inserted} data, Dilewati/Gagal: {$skipped} data."
+        'message' => "Import selesai. Berhasil: {$inserted} data, dilewati: {$skipped}. Masalah kolom: NIS/nama {$invalidRequired}, kelas {$invalidKelas}, jurusan {$invalidJurusan}."
     ];
 } catch (Exception $e) {
     $pdo->rollBack();
